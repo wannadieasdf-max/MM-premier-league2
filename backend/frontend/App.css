@@ -1,0 +1,113 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  background: #101827;
+  color: white;
+}
+
+.app {
+  max-width: 900px;
+  margin: auto;
+  padding: 20px;
+}
+
+header {
+  text-align: center;
+  padding: 25px 10px;
+  background: #172b45;
+  border-radius: 14px;
+  margin-bottom: 20px;
+}
+
+header h1 {
+  color: #f5c542;
+  font-size: 27px;
+}
+
+header p {
+  margin-top: 8px;
+  color: #cbd5e1;
+}
+
+.scoreboard {
+  text-align: center;
+  background: linear-gradient(135deg, #075985, #172554);
+  padding: 30px 15px;
+  border-radius: 18px;
+  margin-bottom: 20px;
+}
+
+.scoreboard h1 {
+  font-size: 65px;
+  color: #facc15;
+  margin: 15px;
+}
+
+.details, .controls, .players {
+  background: #1e293b;
+  padding: 20px;
+  border-radius: 14px;
+  margin-top: 18px;
+}
+
+.details {
+  display: grid;
+  gap: 10px;
+}
+
+.details input {
+  padding: 12px;
+  background: #0f172a;
+  color: white;
+  border: 1px solid #475569;
+  border-radius: 8px;
+}
+
+.players {
+  line-height: 2;
+}
+
+.controls h2 {
+  text-align: center;
+  color: #facc15;
+  margin-bottom: 20px;
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+button {
+  padding: 16px 10px;
+  border: none;
+  border-radius: 9px;
+  background: #2563eb;
+  color: white;
+  font-size: 17px;
+  font-weight: bold;
+}
+
+.undo, .reset {
+  width: 100%;
+  margin-top: 15px;
+}
+
+.undo { background: #d97706; }
+.reset { background: #dc2626; }
+
+footer {
+  text-align: center;
+  padding: 25px 5px;
+  color: #94a3b8;
+}
+
+@media(max-width:480px) {
+  .scoreboard h1 { font-size: 52px; }
+  }
