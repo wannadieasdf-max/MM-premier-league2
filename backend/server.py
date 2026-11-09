@@ -1,127 +1,105 @@
-from fastapi import FastAPI
+import os
+from copy import deepcopy
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import List
 
-app = FastAPI(title="MMPL Live Scoring API")
+app = FastAPI(title="MMPL Live Scoring API", version="2.0")
 
-# Allow frontend connections
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initial match data
-match = {
-    "team": "SADEYA",
-    "opponent": "KUDWA",
-    "runs": 0,
-    "wickets": 0,
-    "balls": 0,
-    "batsman": "Batsman 1",
-    "bowler": "Bowler 1",
-    "history": []
-}
+def fresh_state():
+    return {
+        "teams": [f"Team {i}" for i in range(1, 9)],
+        "scores": [
+            {"aRuns": 0, "aWkts": 0, "aOvers": "0.0",
+             "bRuns": 0, "bWkts": 0, "bOvers": "0.0", "winner": ""}
+            for _ in range(7)
+        ],
+    }
 
+state = fresh_state()
+mongo_client = None
+collection = None
 
-class ScoreUpdate(BaseModel):
-    runs: int = 0
-    wicket: bool = False
-    legal_ball: bool = True
+# Optional MongoDB persistence. If MONGO_URL is configured on Render,
+# tournament data survives server restarts and redeployments.
+mongo_url = os.getenv("MONGO_URL") or os.getenv("MONGODB_URL")
+if mongo_url:
+    try:
+        from motor.motor_asyncio import AsyncIOMotorClient
+        mongo_client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=5000)
+        db_name = os.getenv("MONGO_DB_NAME", "mmpl")
+        collection = mongo_client[db_name]["tournament"]
+    except Exception:
+        mongo_client = None
+        collection = None
 
-
-class MatchDetails(BaseModel):
-    team: Optional[str] = None
-    opponent: Optional[str] = None
-    batsman: Optional[str] = None
-    bowler: Optional[str] = None
-
+class TournamentState(BaseModel):
+    teams: List[str] = Field(min_length=8, max_length=8)
+    scores: List[dict] = Field(min_length=7, max_length=7)
 
 @app.get("/")
-def home():
-    return {
-        "message": "MMPL Live Scoring API is running",
-        "status": "success"
-    }
+async def root():
+    return {"message": "MMPL Live Scoring API is running", "status": "success", "format": "8 teams, 7 knockout matches"}
 
+@app.get("/api/state")
+async def get_state():
+    global state
+    if collection is not None:
+        try:
+            doc = await collection.find_one({"_id": "main"})
+            if doc and "data" in doc:
+                state = doc["data"]
+        except Exception:
+            pass
+    return deepcopy(state)
 
-@app.get("/api/score")
-def get_score():
-    return {
-        "team": match["team"],
-        "opponent": match["opponent"],
-        "runs": match["runs"],
-        "wickets": match["wickets"],
-        "balls": match["balls"],
-        "overs": f'{match["balls"] // 6}.{match["balls"] % 6}',
-        "batsman": match["batsman"],
-        "bowler": match["bowler"]
-    }
+@app.put("/api/state")
+async def save_state(payload: TournamentState):
+    global state
+    teams = [str(name).strip()[:40] or f"Team {i+1}" for i, name in enumerate(payload.teams)]
+    scores = []
+    for score in payload.scores:
+        scores.append({
+            "aRuns": max(0, int(score.get("aRuns", 0))),
+            "aWkts": max(0, min(10, int(score.get("aWkts", 0)))),
+            "aOvers": str(score.get("aOvers", "0.0"))[:8],
+            "bRuns": max(0, int(score.get("bRuns", 0))),
+            "bWkts": max(0, min(10, int(score.get("bWkts", 0)))),
+            "bOvers": str(score.get("bOvers", "0.0"))[:8],
+            "winner": str(score.get("winner", ""))[:40],
+        })
+    state = {"teams": teams, "scores": scores}
+    if collection is not None:
+        try:
+            await collection.update_one(
+                {"_id": "main"},
+                {"$set": {"data": state}},
+                upsert=True
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Database save failed: {exc}")
+    return {"status": "success", "message": "Tournament saved", "data": state}
 
-
-@app.post("/api/score/update")
-def update_score(data: ScoreUpdate):
-
-    if data.runs < 0:
-        return {"status": "error", "message": "Invalid runs"}
-
-    match["history"].append({
-        "runs": match["runs"],
-        "wickets": match["wickets"],
-        "balls": match["balls"]
-    })
-
-    match["runs"] += data.runs
-
-    if data.wicket:
-        match["wickets"] += 1
-
-    if data.legal_ball:
-        match["balls"] += 1
-
-    return get_score()
-
-
-@app.post("/api/match/details")
-def update_details(data: MatchDetails):
-
-    for key in ["team", "opponent", "batsman", "bowler"]:
-        value = getattr(data, key)
-        if value is not None:
-            match[key] = value
-
-    return {"status": "success", "match": get_score()}
-
-
-@app.post("/api/score/undo")
-def undo_score():
-
-    if not match["history"]:
-        return {"status": "error", "message": "Nothing to undo"}
-
-    previous = match["history"].pop()
-
-    match["runs"] = previous["runs"]
-    match["wickets"] = previous["wickets"]
-    match["balls"] = previous["balls"]
-
-    return get_score()
-
-
-@app.post("/api/score/reset")
-def reset_score():
-
-    match["runs"] = 0
-    match["wickets"] = 0
-    match["balls"] = 0
-    match["history"] = []
-
-    return {"status": "success", "message": "Score reset"}
-
-
-@app.get("/api/health")
-def health():
-    return {"status": "healthy"}
+@app.post("/api/reset")
+async def reset_state():
+    global state
+    state = fresh_state()
+    if collection is not None:
+        try:
+            await collection.update_one(
+                {"_id": "main"},
+                {"$set": {"data": state}},
+                upsert=True
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Database reset failed: {exc}")
+    return {"status": "success", "message": "Tournament reset"}
